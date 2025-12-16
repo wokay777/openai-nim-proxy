@@ -20,9 +20,7 @@ const SHOW_REASONING = true; // Set to true to show reasoning with <think> tags
 // 🔥 THINKING MODE TOGGLE - Enables thinking for specific models that support it
 const ENABLE_THINKING_MODE = true; // Set to true to enable chat_template_kwargs thinking parameter
 
-// Model mapping (OPTIONAL - Just for convenience!)
-// You can type EITHER the mapped name OR the actual NVIDIA model ID in Janitor AI
-// Example: Type "gpt-4" OR "qwen/qwen3-coder-480b-a35b-instruct" - both work!
+// Model mapping (adjust based on available NIM models)
 const MODEL_MAPPING = {
   'gpt-3.5-turbo': 'nvidia/llama-3.1-nemotron-ultra-253b-v1',
   'gpt-4': 'qwen/qwen3-coder-480b-a35b-instruct',
@@ -65,8 +63,35 @@ app.post('/v1/chat/completions', async (req, res) => {
   try {
     const { model, messages, temperature, max_tokens, stream } = req.body;
     
-    // Simple model selection: use mapping if exists, otherwise pass through directly
-    const nimModel = MODEL_MAPPING[model] || model;
+    // Smart model selection with fallback
+    let nimModel = MODEL_MAPPING[model];
+    if (!nimModel) {
+      try {
+        await axios.post(`${NIM_API_BASE}/chat/completions`, {
+          model: model,
+          messages: [{ role: 'user', content: 'test' }],
+          max_tokens: 1
+        }, {
+          headers: { 'Authorization': `Bearer ${NIM_API_KEY}`, 'Content-Type': 'application/json' },
+          validateStatus: (status) => status < 500
+        }).then(res => {
+          if (res.status >= 200 && res.status < 300) {
+            nimModel = model;
+          }
+        });
+      } catch (e) {}
+      
+      if (!nimModel) {
+        const modelLower = model.toLowerCase();
+        if (modelLower.includes('gpt-4') || modelLower.includes('claude-opus') || modelLower.includes('405b')) {
+          nimModel = 'meta/llama-3.1-405b-instruct';
+        } else if (modelLower.includes('claude') || modelLower.includes('gemini') || modelLower.includes('70b')) {
+          nimModel = 'meta/llama-3.1-70b-instruct';
+        } else {
+          nimModel = 'meta/llama-3.1-8b-instruct';
+        }
+      }
+    }
     
     // Transform OpenAI request to NIM format
     const nimRequest = {
@@ -79,9 +104,12 @@ app.post('/v1/chat/completions', async (req, res) => {
     };
     
     // Add thinking mode for models that support it
+    // DeepSeek V3.2 and similar models need this parameter
     if (ENABLE_THINKING_MODE && (nimModel.includes('deepseek') || nimModel.includes('thinking'))) {
       nimRequest.chat_template_kwargs = { thinking: true };
     }
+    
+    console.log('Request to NVIDIA:', JSON.stringify({ model: nimModel, has_thinking: !!nimRequest.chat_template_kwargs }));
     
     // Make request to NVIDIA NIM API
     const response = await axios.post(`${NIM_API_BASE}/chat/completions`, nimRequest, {
@@ -103,94 +131,12 @@ app.post('/v1/chat/completions', async (req, res) => {
       let reasoningStarted = false;
       let hasStarted = false;
       
-      response.data.on('data', (chunk) => {
-        try {
-          if (!hasStarted) {
-            hasStarted = true;
-            res.flushHeaders(); // Force headers to send immediately
-          }
-          
-          buffer += chunk.toString();
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-          
-          lines.forEach(line => {
-            if (!line.trim()) return;
-            
-            if (line.startsWith('data: ')) {
-              if (line.includes('[DONE]')) {
-                res.write('data: [DONE]\n\n');
-                return;
-              }
-              
-              try {
-                const data = JSON.parse(line.slice(6));
-                if (data.choices?.[0]?.delta) {
-                  const reasoning = data.choices[0].delta.reasoning_content;
-                  const content = data.choices[0].delta.content;
-                  
-                  if (SHOW_REASONING) {
-                    let combinedContent = '';
-                    
-                    if (reasoning && !reasoningStarted) {
-                      combinedContent = '<think>\n' + reasoning;
-                      reasoningStarted = true;
-                    } else if (reasoning) {
-                      combinedContent = reasoning;
-                    }
-                    
-                    if (content && reasoningStarted) {
-                      combinedContent += '\n</think>\n\n' + content;
-                      reasoningStarted = false;
-                    } else if (content) {
-                      combinedContent += content;
-                    }
-                    
-                    if (combinedContent) {
-                      data.choices[0].delta.content = combinedContent;
-                      delete data.choices[0].delta.reasoning_content;
-                    }
-                  } else {
-                    // When not showing reasoning, only send actual content
-                    if (content) {
-                      data.choices[0].delta.content = content;
-                    } else {
-                      data.choices[0].delta.content = '';
-                    }
-                    delete data.choices[0].delta.reasoning_content;
-                  }
-                }
-                
-                const output = `data: ${JSON.stringify(data)}\n\n`;
-                res.write(output);
-              } catch (e) {
-                // If JSON parse fails, just pass through
-                res.write(line + '\n\n');
-              }
-            }
-          });
-        } catch (err) {
-          console.error('Stream processing error:', err);
-        }
-      });
-      
-      response.data.on('end', () => {
-        if (reasoningStarted) {
-          // Close unclosed thinking tag
-          res.write('data: {"choices":[{"delta":{"content":"\\n</think>"}}]}\n\n');
-        }
-        res.write('data: [DONE]\n\n');
-        res.end();
-      });
-      
-      response.data.on('error', (err) => {
-        console.error('Stream error:', err);
-        res.write(`data: {"error": "${err.message}"}\n\n`);
-        res.write('data: [DONE]\n\n');
-        res.end();
-      });
+
+
     } else {
       // Transform NIM response to OpenAI format with reasoning
+      console.log('📦 Non-streaming response received');
+      
       const openaiResponse = {
         id: `chatcmpl-${Date.now()}`,
         object: 'chat.completion',
@@ -198,6 +144,13 @@ app.post('/v1/chat/completions', async (req, res) => {
         model: model,
         choices: response.data.choices.map(choice => {
           let fullContent = choice.message?.content || '';
+          
+          // Debug logging
+          if (choice.message?.reasoning_content) {
+            console.log('🧠 Reasoning found in response:', choice.message.reasoning_content.substring(0, 100));
+          } else {
+            console.log('❌ No reasoning_content field. Available fields:', Object.keys(choice.message || {}));
+          }
           
           if (SHOW_REASONING && choice.message?.reasoning_content) {
             fullContent = '<think>\n' + choice.message.reasoning_content + '\n</think>\n\n' + fullContent;
@@ -224,12 +177,15 @@ app.post('/v1/chat/completions', async (req, res) => {
     
   } catch (error) {
     console.error('Proxy error:', error.message);
+    console.error('Error details:', error.response?.data || 'No details');
+    console.error('Status:', error.response?.status);
     
     res.status(error.response?.status || 500).json({
       error: {
         message: error.response?.data?.detail || error.message || 'Internal server error',
         type: 'invalid_request_error',
-        code: error.response?.status || 500
+        code: error.response?.status || 500,
+        details: error.response?.data
       }
     });
   }
