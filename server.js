@@ -89,17 +89,24 @@ app.post('/v1/chat/completions', async (req, res) => {
           nimModel = 'meta/llama-3.1-8b-instruct';
         }
       }
-    }
-    
-    // Transform OpenAI request to NIM format
-    const nimRequest = {
-      model: nimModel,
-      messages: messages,
-      temperature: temperature || 0.6,
-      max_tokens: max_tokens || 9024,
-      extra_body: ENABLE_THINKING_MODE ? { chat_template_kwargs: { thinking: true } } : undefined,
-      stream: stream || false
-    };
+
+// Auto-detect if model supports thinking mode
+const supportsThinking = nimModel.includes('deepseek-v3.2') || 
+                         nimModel.includes('qwen3-next') && nimModel.includes('thinking');
+
+// Transform OpenAI request to NIM format
+const nimRequest = {
+  model: nimModel,
+  messages: messages,
+  temperature: temperature || 0.6,
+  max_tokens: max_tokens || 9024,
+  stream: stream || false
+};
+
+// Add thinking mode for supported models
+if (supportsThinking) {
+  nimRequest.chat_template_kwargs = { thinking: true };
+}
     
     // Make request to NVIDIA NIM API
     const response = await axios.post(`${NIM_API_BASE}/chat/completions`, nimRequest, {
