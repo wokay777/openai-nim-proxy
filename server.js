@@ -27,7 +27,7 @@ const MODEL_MAPPING = {
   'gpt-4-turbo': 'moonshotai/kimi-k2-instruct-0905',
   'gpt-4o': 'deepseek-ai/deepseek-v3.1',
   'deepseek-r1': 'deepseek-ai/deepseek-r1-0528',
-  'deepseek-v3.2': 'deepseek-ai/deepseek-v3.2',  // Try with period first
+  'deepseek-v3.2': 'deepseek-ai/deepseek-v3_2',
   'claude-3-opus': 'openai/gpt-oss-120b',
   'claude-3-sonnet': 'openai/gpt-oss-20b',
   'gemini-pro': 'qwen/qwen3-next-80b-a3b-thinking' 
@@ -97,23 +97,19 @@ app.post('/v1/chat/completions', async (req, res) => {
     const nimRequest = {
       model: nimModel,
       messages: messages,
-      temperature: temperature || 1,
+      temperature: temperature !== undefined ? temperature : 1,
       top_p: 0.95,
       max_tokens: max_tokens || 8192,
       stream: stream || false
     };
     
-    // Add thinking mode if enabled (at top level, not in extra_body)
-    if (ENABLE_THINKING_MODE) {
+    // Add thinking mode for models that support it
+    // DeepSeek V3.2 and similar models need this parameter
+    if (ENABLE_THINKING_MODE && (nimModel.includes('deepseek') || nimModel.includes('thinking'))) {
       nimRequest.chat_template_kwargs = { thinking: true };
     }
     
-    // Log the request for debugging
-    console.log('Sending to NVIDIA:', JSON.stringify({
-      model: nimRequest.model,
-      has_thinking: !!nimRequest.chat_template_kwargs,
-      stream: nimRequest.stream
-    }));
+    console.log('Request to NVIDIA:', JSON.stringify({ model: nimModel, has_thinking: !!nimRequest.chat_template_kwargs }));
     
     // Make request to NVIDIA NIM API
     const response = await axios.post(`${NIM_API_BASE}/chat/completions`, nimRequest, {
@@ -256,15 +252,15 @@ app.post('/v1/chat/completions', async (req, res) => {
     
   } catch (error) {
     console.error('Proxy error:', error.message);
-    console.error('Error details:', error.response?.data || 'No response data');
-    console.error('Status code:', error.response?.status);
+    console.error('Error details:', error.response?.data || 'No details');
+    console.error('Status:', error.response?.status);
     
     res.status(error.response?.status || 500).json({
       error: {
         message: error.response?.data?.detail || error.message || 'Internal server error',
         type: 'invalid_request_error',
         code: error.response?.status || 500,
-        nvidia_error: error.response?.data
+        details: error.response?.data
       }
     });
   }
