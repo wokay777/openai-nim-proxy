@@ -24,10 +24,10 @@ const ENABLE_THINKING_MODE = true; // Set to true to enable chat_template_kwargs
 const MODEL_MAPPING = {
   'gpt-3.5-turbo': 'nvidia/llama-3.1-nemotron-ultra-253b-v1',
   'gpt-4': 'qwen/qwen3-coder-480b-a35b-instruct',
-  'gpt-4-turbo': 'moonshotai/kimi-k2-instruct-0905',
+  'kimi': 'moonshotai/kimi-k2-instruct-0905',
   'gpt-4o': 'deepseek-ai/deepseek-v3.1',
-  'deepseek-r1': 'deepseek-ai/deepseek-r1-0528',
-  'deepseek-v3.2': 'deepseek-ai/deepseek-v3_2',
+  'deepseek-r1-0528': 'deepseek-ai/deepseek-r1-0528',
+  'deepseek-v3.2': 'deepseek-ai/deepseek-v3.2',
   'claude-3-opus': 'openai/gpt-oss-120b',
   'claude-3-sonnet': 'openai/gpt-oss-20b',
   'gemini-pro': 'qwen/qwen3-next-80b-a3b-thinking' 
@@ -97,19 +97,15 @@ app.post('/v1/chat/completions', async (req, res) => {
     const nimRequest = {
       model: nimModel,
       messages: messages,
-      temperature: temperature !== undefined ? temperature : 1,
-      top_p: 0.95,
-      max_tokens: max_tokens || 8192,
+      temperature: temperature || 0.6,
+      max_tokens: max_tokens || 9024,
       stream: stream || false
     };
     
-    // Add thinking mode for models that support it
-    // DeepSeek V3.2 and similar models need this parameter
-    if (ENABLE_THINKING_MODE && (nimModel.includes('deepseek') || nimModel.includes('thinking'))) {
+    // Add thinking mode if enabled (at top level, not in extra_body)
+    if (ENABLE_THINKING_MODE) {
       nimRequest.chat_template_kwargs = { thinking: true };
     }
-    
-    console.log('Request to NVIDIA:', JSON.stringify({ model: nimModel, has_thinking: !!nimRequest.chat_template_kwargs }));
     
     // Make request to NVIDIA NIM API
     const response = await axios.post(`${NIM_API_BASE}/chat/completions`, nimRequest, {
@@ -156,10 +152,6 @@ app.post('/v1/chat/completions', async (req, res) => {
                 if (data.choices?.[0]?.delta) {
                   const reasoning = data.choices[0].delta.reasoning_content;
                   const content = data.choices[0].delta.content;
-                  
-                  // Debug logging
-                  if (reasoning) console.log('🧠 Reasoning chunk received:', reasoning.substring(0, 50));
-                  if (content) console.log('💬 Content chunk received:', content.substring(0, 50));
                   
                   if (SHOW_REASONING) {
                     let combinedContent = '';
@@ -223,8 +215,6 @@ app.post('/v1/chat/completions', async (req, res) => {
       });
     } else {
       // Transform NIM response to OpenAI format with reasoning
-      console.log('📦 Non-streaming response received');
-      
       const openaiResponse = {
         id: `chatcmpl-${Date.now()}`,
         object: 'chat.completion',
@@ -232,13 +222,6 @@ app.post('/v1/chat/completions', async (req, res) => {
         model: model,
         choices: response.data.choices.map(choice => {
           let fullContent = choice.message?.content || '';
-          
-          // Debug logging
-          if (choice.message?.reasoning_content) {
-            console.log('🧠 Reasoning found in response:', choice.message.reasoning_content.substring(0, 100));
-          } else {
-            console.log('❌ No reasoning_content field. Available fields:', Object.keys(choice.message || {}));
-          }
           
           if (SHOW_REASONING && choice.message?.reasoning_content) {
             fullContent = '<think>\n' + choice.message.reasoning_content + '\n</think>\n\n' + fullContent;
@@ -265,15 +248,12 @@ app.post('/v1/chat/completions', async (req, res) => {
     
   } catch (error) {
     console.error('Proxy error:', error.message);
-    console.error('Error details:', error.response?.data || 'No details');
-    console.error('Status:', error.response?.status);
     
     res.status(error.response?.status || 500).json({
       error: {
-        message: error.response?.data?.detail || error.message || 'Internal server error',
+        message: error.message || 'Internal server error',
         type: 'invalid_request_error',
-        code: error.response?.status || 500,
-        details: error.response?.data
+        code: error.response?.status || 500
       }
     });
   }
