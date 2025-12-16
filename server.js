@@ -27,7 +27,7 @@ const MODEL_MAPPING = {
   'gpt-4-turbo': 'moonshotai/kimi-k2-instruct-0905',
   'gpt-4o': 'deepseek-ai/deepseek-v3.1',
   'deepseek-r1': 'deepseek-ai/deepseek-r1-0528',
-  'deepseek-v3.2': 'deepseek-ai/deepseek-v3_2',
+  'deepseek-v3.2': 'deepseek-ai/deepseek-v3.2',  // Try with period first
   'claude-3-opus': 'openai/gpt-oss-120b',
   'claude-3-sonnet': 'openai/gpt-oss-20b',
   'gemini-pro': 'qwen/qwen3-next-80b-a3b-thinking' 
@@ -97,8 +97,9 @@ app.post('/v1/chat/completions', async (req, res) => {
     const nimRequest = {
       model: nimModel,
       messages: messages,
-      temperature: temperature || 0.6,
-      max_tokens: max_tokens || 9024,
+      temperature: temperature || 1,
+      top_p: 0.95,
+      max_tokens: max_tokens || 8192,
       stream: stream || false
     };
     
@@ -106,6 +107,13 @@ app.post('/v1/chat/completions', async (req, res) => {
     if (ENABLE_THINKING_MODE) {
       nimRequest.chat_template_kwargs = { thinking: true };
     }
+    
+    // Log the request for debugging
+    console.log('Sending to NVIDIA:', JSON.stringify({
+      model: nimRequest.model,
+      has_thinking: !!nimRequest.chat_template_kwargs,
+      stream: nimRequest.stream
+    }));
     
     // Make request to NVIDIA NIM API
     const response = await axios.post(`${NIM_API_BASE}/chat/completions`, nimRequest, {
@@ -248,12 +256,15 @@ app.post('/v1/chat/completions', async (req, res) => {
     
   } catch (error) {
     console.error('Proxy error:', error.message);
+    console.error('Error details:', error.response?.data || 'No response data');
+    console.error('Status code:', error.response?.status);
     
     res.status(error.response?.status || 500).json({
       error: {
-        message: error.message || 'Internal server error',
+        message: error.response?.data?.detail || error.message || 'Internal server error',
         type: 'invalid_request_error',
-        code: error.response?.status || 500
+        code: error.response?.status || 500,
+        nvidia_error: error.response?.data
       }
     });
   }
