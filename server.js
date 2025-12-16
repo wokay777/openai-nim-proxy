@@ -17,15 +17,14 @@ const NIM_API_KEY = process.env.NIM_API_KEY;
 // 🔥 REASONING DISPLAY TOGGLE - Shows/hides reasoning in output
 const SHOW_REASONING = true; // Set to true to show reasoning with <think> tags
 
-// 🔥 THINKING MODE TOGGLE - Enables thinking for specific models that support it
-const ENABLE_THINKING_MODE = true; // Set to true to enable chat_template_kwargs thinking parameter
-
 // Model mapping (adjust based on available NIM models)
 const MODEL_MAPPING = {
   'gpt-3.5-turbo': 'nvidia/llama-3.1-nemotron-ultra-253b-v1',
   'gpt-4': 'qwen/qwen3-coder-480b-a35b-instruct',
   'gpt-4-turbo': 'moonshotai/kimi-k2-instruct-0905',
   'gpt-4o': 'deepseek-ai/deepseek-v3.1',
+  'deepseek-r1': 'deepseek-ai/deepseek-r1-0528',
+  'deepseek-v32': 'deepseek-ai/deepseek-v3.2',
   'claude-3-opus': 'openai/gpt-oss-120b',
   'claude-3-sonnet': 'openai/gpt-oss-20b',
   'gemini-pro': 'qwen/qwen3-next-80b-a3b-thinking' 
@@ -37,7 +36,7 @@ app.get('/health', (req, res) => {
     status: 'ok', 
     service: 'OpenAI to NVIDIA NIM Proxy', 
     reasoning_display: SHOW_REASONING,
-    thinking_mode: ENABLE_THINKING_MODE
+    auto_thinking_detection: 'enabled'
   });
 });
 
@@ -89,24 +88,25 @@ app.post('/v1/chat/completions', async (req, res) => {
           nimModel = 'meta/llama-3.1-8b-instruct';
         }
       }
-
-// Auto-detect if model supports thinking mode
-const supportsThinking = nimModel.includes('deepseek-v3.2') || 
-                         nimModel.includes('qwen3-next') && nimModel.includes('thinking');
-
-// Transform OpenAI request to NIM format
-const nimRequest = {
-  model: nimModel,
-  messages: messages,
-  temperature: temperature || 0.6,
-  max_tokens: max_tokens || 9024,
-  stream: stream || false
-};
-
-// Add thinking mode for supported models
-if (supportsThinking) {
-  nimRequest.chat_template_kwargs = { thinking: true };
-}
+    }
+    
+    // 🔥 AUTO-DETECT THINKING MODE - Models that need chat_template_kwargs
+    const supportsThinking = nimModel.includes('deepseek-v3.2') || 
+                             (nimModel.includes('qwen3-next') && nimModel.includes('thinking'));
+    
+    // Transform OpenAI request to NIM format
+    const nimRequest = {
+      model: nimModel,
+      messages: messages,
+      temperature: temperature || 0.6,
+      max_tokens: max_tokens || 9024,
+      stream: stream || false
+    };
+    
+    // Add thinking mode for supported models (directly in body, not extra_body)
+    if (supportsThinking) {
+      nimRequest.chat_template_kwargs = { thinking: true };
+    }
     
     // Make request to NVIDIA NIM API
     const response = await axios.post(`${NIM_API_BASE}/chat/completions`, nimRequest, {
@@ -117,8 +117,8 @@ if (supportsThinking) {
       responseType: stream ? 'stream' : 'json'
     });
     
-if (stream) {
-      // Handle streaming response with reasoning
+    if (stream) {
+      // Handle streaming response with reasoning (improved)
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Connection', 'keep-alive');
@@ -214,12 +214,6 @@ if (stream) {
         res.write('data: [DONE]\n\n');
         res.end();
       });
-      
-      response.data.on('end', () => res.end());
-      response.data.on('error', (err) => {
-        console.error('Stream error:', err);
-        res.end();
-      });
     } else {
       // Transform NIM response to OpenAI format with reasoning
       const openaiResponse = {
@@ -281,5 +275,5 @@ app.listen(PORT, () => {
   console.log(`OpenAI to NVIDIA NIM Proxy running on port ${PORT}`);
   console.log(`Health check: http://localhost:${PORT}/health`);
   console.log(`Reasoning display: ${SHOW_REASONING ? 'ENABLED' : 'DISABLED'}`);
-  console.log(`Thinking mode: ${ENABLE_THINKING_MODE ? 'ENABLED' : 'DISABLED'}`);
+  console.log(`Auto-thinking detection: ENABLED`);
 });
