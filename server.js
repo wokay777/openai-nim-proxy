@@ -20,14 +20,16 @@ const SHOW_REASONING = true; // Set to true to show reasoning with <think> tags
 // 🔥 THINKING MODE TOGGLE - Enables thinking for specific models that support it
 const ENABLE_THINKING_MODE = true; // Set to true to enable chat_template_kwargs thinking parameter
 
-// Model mapping (adjust based on available NIM models)
+// Model mapping (OPTIONAL - Just for convenience!)
+// You can type EITHER the mapped name OR the actual NVIDIA model ID in Janitor AI
+// Example: Type "gpt-4" OR "qwen/qwen3-coder-480b-a35b-instruct" - both work!
 const MODEL_MAPPING = {
   'gpt-3.5-turbo': 'nvidia/llama-3.1-nemotron-ultra-253b-v1',
   'gpt-4': 'qwen/qwen3-coder-480b-a35b-instruct',
-  'kimi': 'moonshotai/kimi-k2-instruct-0905',
+  'gpt-4-turbo': 'moonshotai/kimi-k2-instruct-0905',
   'gpt-4o': 'deepseek-ai/deepseek-v3.1',
-  'deepseek-r1-0528': 'deepseek-ai/deepseek-r1-0528',
-  'deepseek-v3.2': 'deepseek-ai/deepseek-v3.2',
+  'deepseek-r1': 'deepseek-ai/deepseek-r1-0528',
+  'deepseek-v3.2': 'deepseek-ai/deepseek-v3_2',
   'claude-3-opus': 'openai/gpt-oss-120b',
   'claude-3-sonnet': 'openai/gpt-oss-20b',
   'gemini-pro': 'qwen/qwen3-next-80b-a3b-thinking' 
@@ -63,47 +65,21 @@ app.post('/v1/chat/completions', async (req, res) => {
   try {
     const { model, messages, temperature, max_tokens, stream } = req.body;
     
-    // Smart model selection with fallback
-    let nimModel = MODEL_MAPPING[model];
-    if (!nimModel) {
-      try {
-        await axios.post(`${NIM_API_BASE}/chat/completions`, {
-          model: model,
-          messages: [{ role: 'user', content: 'test' }],
-          max_tokens: 1
-        }, {
-          headers: { 'Authorization': `Bearer ${NIM_API_KEY}`, 'Content-Type': 'application/json' },
-          validateStatus: (status) => status < 500
-        }).then(res => {
-          if (res.status >= 200 && res.status < 300) {
-            nimModel = model;
-          }
-        });
-      } catch (e) {}
-      
-      if (!nimModel) {
-        const modelLower = model.toLowerCase();
-        if (modelLower.includes('gpt-4') || modelLower.includes('claude-opus') || modelLower.includes('405b')) {
-          nimModel = 'meta/llama-3.1-405b-instruct';
-        } else if (modelLower.includes('claude') || modelLower.includes('gemini') || modelLower.includes('70b')) {
-          nimModel = 'meta/llama-3.1-70b-instruct';
-        } else {
-          nimModel = 'meta/llama-3.1-8b-instruct';
-        }
-      }
-    }
+    // Simple model selection: use mapping if exists, otherwise pass through directly
+    const nimModel = MODEL_MAPPING[model] || model;
     
     // Transform OpenAI request to NIM format
     const nimRequest = {
       model: nimModel,
       messages: messages,
-      temperature: temperature || 0.6,
-      max_tokens: max_tokens || 9024,
+      temperature: temperature !== undefined ? temperature : 1,
+      top_p: 0.95,
+      max_tokens: max_tokens || 8192,
       stream: stream || false
     };
     
-    // Add thinking mode if enabled (at top level, not in extra_body)
-    if (ENABLE_THINKING_MODE) {
+    // Add thinking mode for models that support it
+    if (ENABLE_THINKING_MODE && (nimModel.includes('deepseek') || nimModel.includes('thinking'))) {
       nimRequest.chat_template_kwargs = { thinking: true };
     }
     
@@ -251,7 +227,7 @@ app.post('/v1/chat/completions', async (req, res) => {
     
     res.status(error.response?.status || 500).json({
       error: {
-        message: error.message || 'Internal server error',
+        message: error.response?.data?.detail || error.message || 'Internal server error',
         type: 'invalid_request_error',
         code: error.response?.status || 500
       }
