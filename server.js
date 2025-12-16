@@ -157,6 +157,10 @@ app.post('/v1/chat/completions', async (req, res) => {
                   const reasoning = data.choices[0].delta.reasoning_content;
                   const content = data.choices[0].delta.content;
                   
+                  // Debug logging
+                  if (reasoning) console.log('🧠 Reasoning chunk received:', reasoning.substring(0, 50));
+                  if (content) console.log('💬 Content chunk received:', content.substring(0, 50));
+                  
                   if (SHOW_REASONING) {
                     let combinedContent = '';
                     
@@ -219,6 +223,8 @@ app.post('/v1/chat/completions', async (req, res) => {
       });
     } else {
       // Transform NIM response to OpenAI format with reasoning
+      console.log('📦 Non-streaming response received');
+      
       const openaiResponse = {
         id: `chatcmpl-${Date.now()}`,
         object: 'chat.completion',
@@ -226,6 +232,13 @@ app.post('/v1/chat/completions', async (req, res) => {
         model: model,
         choices: response.data.choices.map(choice => {
           let fullContent = choice.message?.content || '';
+          
+          // Debug logging
+          if (choice.message?.reasoning_content) {
+            console.log('🧠 Reasoning found in response:', choice.message.reasoning_content.substring(0, 100));
+          } else {
+            console.log('❌ No reasoning_content field. Available fields:', Object.keys(choice.message || {}));
+          }
           
           if (SHOW_REASONING && choice.message?.reasoning_content) {
             fullContent = '<think>\n' + choice.message.reasoning_content + '\n</think>\n\n' + fullContent;
