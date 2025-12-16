@@ -90,18 +90,50 @@ app.post('/v1/chat/completions', async (req, res) => {
       }
     }
     
-    // 🔥 AUTO-DETECT THINKING MODE - Models that need chat_template_kwargs
-    const supportsThinking = nimModel.includes('deepseek-v3.2') || 
-                             (nimModel.includes('qwen3-next') && nimModel.includes('thinking'));
-    
-    // Transform OpenAI request to NIM format
-    const nimRequest = {
-      model: nimModel,
-      messages: messages,
-      temperature: temperature || 0.6,
-      max_tokens: max_tokens || 9024,
-      stream: stream || false
-    };
+// 🔥 AUTO-DETECT THINKING MODE - Models that need chat_template_kwargs
+const supportsThinking = nimModel.includes('deepseek-v3.2') || 
+                         nimModel.includes('deepseek-v3') ||  // Broader match
+                         (nimModel.includes('qwen3-next') && nimModel.includes('thinking'));
+
+// Debug logging
+console.log('=== DEBUG INFO ===');
+console.log('Selected model:', nimModel);
+console.log('Supports thinking:', supportsThinking);
+
+// Transform OpenAI request to NIM format
+const nimRequest = {
+  model: nimModel,
+  messages: messages,
+  temperature: temperature || 0.6,
+  max_tokens: max_tokens || 9024,
+  stream: stream || false
+};
+
+// Add thinking mode for supported models (directly in body, not extra_body)
+if (supportsThinking) {
+  nimRequest.chat_template_kwargs = { thinking: true };
+  console.log('Added chat_template_kwargs:', nimRequest.chat_template_kwargs);
+}
+
+console.log('Final request:', JSON.stringify(nimRequest, null, 2));
+console.log('==================');
+```
+
+**Commit the changes**, wait for Railway to redeploy, then:
+
+### Check Railway Logs:
+1. Go to Railway → Your Project → Deployments
+2. Click on the latest deployment
+3. Click **"View Logs"**
+4. Send a message in Janitor AI with model `deepseek-v32`
+5. Look at the logs - you should see something like:
+```
+=== DEBUG INFO ===
+Selected model: deepseek-ai/deepseek-v3.2
+Supports thinking: true
+Added chat_template_kwargs: { thinking: true }
+Final request: {...}
+==================
     
     // Add thinking mode for supported models (directly in body, not extra_body)
     if (supportsThinking) {
