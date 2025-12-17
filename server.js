@@ -233,7 +233,7 @@ app.post('/v1/chat/completions', async (req, res) => {
   } catch (error) {
     console.error('Proxy error:', error.message);
     if (error.response?.data) {
-      console.error('NVIDIA error response:', JSON.stringify(error.response.data));
+      console.error('NVIDIA error details:', error.response.data);
     }
     
     res.status(error.response?.status || 500).json({
