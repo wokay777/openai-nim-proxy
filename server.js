@@ -80,16 +80,14 @@ app.post('/v1/chat/completions', async (req, res) => {
     
     // Add thinking mode for specific models that need it
     const thinkingEnabledModels = [
-      'deepseek-ai/deepseek-v3_2',
-      'deepseek-ai/deepseek-v3.2',
-      'qwen/qwen3-next-80b-a3b-thinking',
+      'deepseek-v3_2',
+      'deepseek-v3.2',
+      'qwen3-next-80b-a3b-thinking',
     ];
     
-    if (ENABLE_THINKING_MODE && thinkingEnabledModels.some(m => nimModel.includes(m.split('/')[1]))) {
+    if (ENABLE_THINKING_MODE && thinkingEnabledModels.some(m => nimModel.includes(m))) {
       nimRequest.chat_template_kwargs = { thinking: true };
     }
-    
-    console.log('Sending to NVIDIA:', { model: nimModel, has_thinking_param: !!nimRequest.chat_template_kwargs });
     
     // Make request to NVIDIA NIM API
     const response = await axios.post(`${NIM_API_BASE}/chat/completions`, nimRequest, {
@@ -232,9 +230,6 @@ app.post('/v1/chat/completions', async (req, res) => {
     
   } catch (error) {
     console.error('Proxy error:', error.message);
-    if (error.response?.data) {
-      console.error('NVIDIA error details:', error.response.data);
-    }
     
     res.status(error.response?.status || 500).json({
       error: {
